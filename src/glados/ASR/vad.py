@@ -2,11 +2,11 @@ from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
-import onnxruntime as ort
+import onnxruntime as ort  # type: ignore
 
 from ..utils.resources import resource_path
 
-# Default OnnxRuntime is way to verbose
+# Default OnnxRuntime is way to verbose, only show fatal errors
 ort.set_default_logger_severity(4)
 
 
