@@ -92,7 +92,7 @@ class GladosConfig(BaseModel):
         for key in key_to_config:
             config = config[key]
 
-        return cls(**cls.model_validate(config).dict())
+        return cls.model_validate(config)
 
     def to_chat_messages(self) -> list[dict[str, str]]:
         """Convert personality preprompt to chat message format."""
@@ -114,7 +114,7 @@ class Glados:
     BUFFER_SIZE: int = 800  # Milliseconds of buffer BEFORE VAD detection
     PAUSE_LIMIT: int = 640  # Milliseconds of pause allowed before processing
     SIMILARITY_THRESHOLD: int = 2  # Threshold for wake word similarity
-
+    PUNCTUATION_SET: tuple[str, ...] = (".", "!", "?", ":", ";", "?!", "\n", "\n\n")  # Sentence splitting punctuation
     NEUROTOXIN_RELEASE_ALLOWED: bool = False  # preparation for function calling, see issue #13
     DEFAULT_PERSONALITY_PREPROMPT: tuple[dict[str, str], ...] = (
         {
@@ -664,20 +664,9 @@ class Glados:
                                     if chunk:
                                         sentence.append(chunk)
                                         # If there is a pause token, send the sentence to the TTS queue
-                                        if (
-                                            chunk
-                                            in [
-                                                ".",
-                                                "!",
-                                                "?",
-                                                ":",
-                                                ";",
-                                                "?!",
-                                                "\n",
-                                                "\n\n",
-                                            ]
-                                            and sentence[-2].isdigit() is False
-                                        ):  # Don't split on numbers!
+                                        if chunk in self.PUNCTUATION_SET and (
+                                            len(sentence) < 2 or not sentence[-2].strip().isdigit()
+                                        ):  # Don't split on numbers, e.g. "1.5"
                                             logger.info(f"Chunk: {chunk}")
                                             self._process_sentence(sentence)
                                             sentence = []

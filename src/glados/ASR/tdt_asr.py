@@ -63,7 +63,6 @@ class _OnnxTDTModel:
         # Extract metadata from encoder
         encoder_meta = self.encoder.get_modelmeta().custom_metadata_map
         self.normalize_type: str | None = encoder_meta.get("normalize_type")  # ToDo: Validate agaisnt config
-        print(f"normalize_type: {self.normalize_type}")
         self.pred_rnn_layers = int(encoder_meta.get("pred_rnn_layers", 0))
         self.pred_hidden = int(encoder_meta.get("pred_hidden", 0))
         logger.info(f"Encoder metadata: {encoder_meta}")
