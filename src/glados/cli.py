@@ -5,7 +5,7 @@ from pathlib import Path
 import requests
 import sounddevice as sd  # type: ignore
 
-from .engine import Glados, GladosConfig
+from .core.engine import Glados, GladosConfig
 from .TTS import tts_glados
 from .utils import spoken_text_converter as stc
 from .utils.resources import resource_path
@@ -208,7 +208,7 @@ def say(text: str, config_path: str | Path = "glados_config.yaml") -> None:
     Example:
         say("Hello, world!")  # Speaks the text using GLaDOS voice
     """
-    glados_tts = tts_glados.Synthesizer()
+    glados_tts = tts_glados.SpeechSynthesizer()
     converter = stc.SpokenTextConverter()
     converted_text = converter.text_to_spoken(text)
     # Generate the audio to from the text
@@ -240,8 +240,9 @@ def start(config_path: str | Path = "glados_config.yaml") -> None:
     """
     glados_config = GladosConfig.from_yaml(str(config_path))
     glados = Glados.from_config(glados_config)
-    glados.play_announcement()
-    glados.start_listen_event_loop()
+    if glados.announcement:
+        glados.play_announcement()
+    glados.run()
 
 
 def tui(config_path: str | Path = "glados_config.yaml") -> None:
@@ -333,6 +334,7 @@ def main() -> None:
         download_models()
     else:
         if models_valid() is False:
+            print("Model files are invalid or missing. Please run 'uv run glados download'")
             return
         if args.command == "say":
             say(args.text, args.config)
