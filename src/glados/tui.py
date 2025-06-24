@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from pathlib import Path
 import random
 import sys
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from loguru import logger
 from rich.text import Text
@@ -88,10 +88,16 @@ class Typewriter(Static):
         id: str | None = None,  # Consistent with typical Textual widget `id` parameter
         speed: float = 0.01,  # time between each character
         repeat: bool = False,  # whether to start again at the end
-        *args: str,  # Passed to super().__init__
-        **kwargs: str,  # Passed to super().__init__
+        # Static widget parameters
+        content: str = "",
+        expand: bool = False,
+        shrink: bool = False,
+        markup: bool = True,
+        name: str | None = None,
+        classes: str | None = None,
+        disabled: bool = False,
     ) -> None:
-        super().__init__(*args, **kwargs)  # Pass all kwargs to parent
+        # Initialize our custom attributes first
         self._text = text
         self.__id_for_child = id  # Store id specifically for the child VerticalScroll
         self._speed = speed
@@ -102,6 +108,18 @@ class Typewriter(Static):
         if "[" in text or "]" in text:
             # If there are brackets in the text, disable markup to avoid conflicts
             self._use_markup = False
+
+        # Call parent constructor with proper parameters
+        super().__init__(
+            content,
+            expand=expand,
+            shrink=shrink,
+            markup=markup,
+            name=name,
+            id=id,
+            classes=classes,
+            disabled=disabled,
+        )
 
     def compose(self) -> ComposeResult:
         self._static = Static(markup=self._use_markup)
@@ -189,26 +207,23 @@ class SplashScreen(Screen[None]):
         """
         self.set_interval(0.5, self.scroll_end)
 
-    # Removed duplicated on_key method. Python uses the last definition.
     def on_key(self, event: events.Key) -> None:
         """
         Handle key press events on the splash screen.
 
         This method is triggered when a key is pressed during the splash screen display.
-        If the 'q' key is pressed, it triggers the application quit action.
-        Regardless of the key pressed, it dismisses the current splash screen
-        and starts the main GLADOS application.
+        All keybinds which are active in the main app are active here automatically
+        so, for example, ctrl-q will terminate the app. They do not need to be handled.
+        Any other key will start the GlaDOS engine and then dismiss the splash screen.
 
         Args:
             event (events.Key): The key event that was triggered.
         """
-        if event.key == "q":
-            self.app.action_quit()
-        else:
-            if self.app.glados_engine_instance:
-                self.app.glados_engine_instance.play_announcement()
-                self.app.start_glados()
-                self.dismiss()
+        app = cast(GladosUI, self.app)  # mypy gets confused about app's type
+        if app.glados_engine_instance:
+            app.glados_engine_instance.play_announcement()
+            app.start_glados()
+            self.dismiss()
 
 
 class HelpScreen(ModalScreen[None]):
@@ -355,6 +370,17 @@ class GladosUI(App[None]):
         self.push_screen(SplashScreen())
         self.notify("Loading AI engine...", title="GLaDOS", timeout=6)
 
+    def on_unmount(self) -> None:
+        """
+        Called when the app is quitting.
+
+        Makes sure that the GLaDOS engine is gracefully shut down.
+        """
+        logger.info("Quit action initiated in TUI.")
+        if hasattr(self, "glados_engine_instance") and self.glados_engine_instance is not None:
+            logger.info("Signalling GLaDOS engine to stop...")
+            self.glados_engine_instance.shutdown_event.set()
+
     def action_help(self) -> None:
         """Someone pressed the help key!."""
         self.push_screen(HelpScreen(id="help_screen"))
@@ -362,38 +388,6 @@ class GladosUI(App[None]):
     # def on_key(self, event: events.Key) -> None:
     #     """Useful for debugging via key presses."""
     #     logger.success(f"Key pressed: {self.glados_worker}")
-
-    async def action_quit(self) -> None:
-        logger.info("Quit action initiated in TUI.")
-        if hasattr(self, "glados_engine_instance") and self.glados_engine_instance is not None:
-            logger.info("Signalling GLaDOS engine to stop...")
-            self.glados_engine_instance.stop_listen_event_loop()
-
-            if hasattr(self, "glados_worker") and self.glados_worker is not None:
-                if isinstance(self.glados_worker, Worker) and self.glados_worker.is_running:
-                    logger.warning("Waiting for GLaDOS worker to complete...")
-                    try:
-                        await self.glados_worker.wait()
-                        if self.glados_worker.is_running:
-                            logger.warning("GLaDOS worker is still running after wait.")
-                        else:
-                            logger.info("GLaDOS worker has completed.")
-                    except TimeoutError:
-                        logger.warning("Timeout waiting for GLaDOS worker to complete.")
-                    except Exception as e:
-                        logger.error(f"Error waiting for GLaDOS worker: {e}")
-                else:
-                    logger.info("GLaDOS worker was not running or already finished.")
-            else:
-                logger.warning("GLaDOS worker attribute not found.")
-
-            # del self.glados_engine_instance
-            self.glados_engine_instance = None
-        else:
-            logger.info("GLaDOS engine instance not found or already cleaned up.")
-
-        logger.info("Exiting Textual application.")
-        self.exit()
 
     def on_worker_state_changed(self, message: Worker.StateChanged) -> None:
         """Handle messages from workers."""
@@ -420,9 +414,7 @@ class GladosUI(App[None]):
         try:
             # Run in a thread to avoid blocking the UI
             if self.glados_engine_instance is not None:
-                self.glados_worker = self.run_worker(
-                    self.glados_engine_instance.start_listen_event_loop, exclusive=True, thread=True
-                )
+                self.glados_worker = self.run_worker(self.glados_engine_instance.run, exclusive=True, thread=True)
                 logger.info("GLaDOS worker started.")
             else:
                 logger.error("Cannot start GLaDOS worker: glados_engine_instance is None.")
@@ -462,21 +454,21 @@ class GladosUI(App[None]):
 
     @classmethod
     def run_app(cls, config_path: str | Path = "glados_config.yaml") -> None:
-        app = None  # Initialize app to None
+        app: GladosUI | None = None  # Initialize app to None
         try:
             app = cls()
             app.run()
         except KeyboardInterrupt:
             logger.info("Application interrupted by user. Exiting.")
-            if app is not None and hasattr(app, "action_quit") and callable(app.action_quit):
-                app.action_quit()  # This will now call the improved action_quit
+            if app is not None:
+                app.exit()
             # No explicit sys.exit(0) here; Textual's app.exit() will handle it.
         except Exception:
             logger.opt(exception=True).critical("Unhandled exception in app run:")
-            if app is not None and hasattr(app, "action_quit") and callable(app.action_quit):
+            if app is not None:
                 # Attempt a graceful shutdown even on other exceptions
                 logger.info("Attempting graceful shutdown due to unhandled exception...")
-                app.action_quit()
+                app.exit()
             sys.exit(1)  # Exit with error for unhandled exceptions
 
 
