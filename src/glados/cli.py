@@ -288,7 +288,7 @@ def main() -> int:
     else:
         if not models_valid():
             print("Some model files are invalid or missing. Please run 'uv run glados download'")
-            return 0
+            return 1
         if args.command == "say":
             say(args.text, args.config)
         elif args.command == "start":
